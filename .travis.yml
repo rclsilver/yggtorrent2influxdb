@@ -1,0 +1,64 @@
+dist: xenial
+sudo: require
+language: bash
+
+addons:
+  apt:
+    packages:
+      - docker-ce
+
+services:
+  - docker
+
+branches:
+  only:
+    - master
+
+env:
+  global:
+    DOCKER_CLI_EXPERIMENTAL=enabled
+
+before_install:
+  - IMAGE_VERSION="v$(awk '$2 == "VERSION" { print $3; exit }' Dockerfile)"
+  - MULTIARCH_VERSION=v4.0.0-5
+
+install:
+  - docker run --rm --privileged multiarch/qemu-user-static:register --reset
+  - |
+    for arch in x86_64 arm; do
+      curl -Lo /tmp/x86_64_qemu-${arch}-static.tar.gz https://github.com/multiarch/qemu-user-static/releases/download/${MULTIARCH_VERSION}/x86_64_qemu-${arch}-static.tar.gz
+      tar xfz /tmp/x86_64_qemu-${arch}-static.tar.gz
+    done
+
+before_script:
+  - echo "${DOCKER_PASSWORD}" | docker login -u "${DOCKER_USERNAME}" --password-stdin
+
+script:
+  # amd64
+  - |
+    docker build \
+      --build-arg PLATFORM=amd64 \
+      --build-arg QEMU_BIN=qemu-x86_64-static \
+      -t ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION}-amd64 \
+      -f Dockerfile \
+      .
+    docker push ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION}-amd64
+
+  # arm32v6
+  - |
+    docker build \
+      --build-arg PLATFORM=arm32v6 \
+      --build-arg QEMU_BIN=qemu-arm-static \
+      -t ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION}-arm32v6 \
+      -f Dockerfile \
+      .
+    docker push ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION}-arm32v6
+
+after_success:
+  - |
+    docker manifest create ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION} \
+      ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION}-amd64 \
+      ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION}-arm32v6
+  - docker manifest annotate ${TRAVIS_REPO_SLUG}:v${IMAGE_VERSION} ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION}-amd64 --os linux --arch amd64
+  - docker manifest annotate ${TRAVIS_REPO_SLUG}:v${IMAGE_VERSION} ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION}-arm32v6 --os linux --arch arm
+  - docker manifest push ${TRAVIS_REPO_SLUG}:${IMAGE_VERSION}
